@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>HTML5 boilerplate – all you really need…</title>
+    <script src="http://cdn.sencha.io/ext/gpl/4.2.1/ext-all.js"></script>
+    <link href="http://cdn.sencha.com/ext/gpl/4.2.1/resources/ext-theme-classic/ext-theme-classic-all.css" type="text/css" rel="stylesheet" />
+    <script>
+        Ext.onReady(function() {
+            Ext.define('FileUploadStore', {
+                extend: 'Ext.data.Store',
+                alias: 'store.fileuploadstore',
+                fields: [
+                    {name:'FileName', type:'string'},
+                    {name:'Size', type:'string'}, 
+                    {name:'Type', type:'string'}, 
+                    {name:'Percent', type:'int'}, 
+                    {name:'FileData', type:'any'},
+                    {name:'FilePath', type:'string'},
+                    {name:'Status', type:'boolean', defaultValue:0}
+                ]
+            });
+            Ext.define('FileUploadButton', {
+                extend: 'Ext.form.field.File',
+                alias: 'widget.fileuploadbutton',
+                buttonOnly: true,
+                buttonText: 'Browse',
+                initComponent: function() {
+                    this.addEvents({
+                        'fileselected': true
+                    });
+                    Ext.apply(this, {
+                        buttonConfig: {
+                            iconCls: this.iconCls,
+                            text: this.buttonText
+                        }
+                    });
+                    this.on('afterrender', function() {
+                        // Allow picking multiple files at once.
+                        this.setMultipleInputAttribute();
+                    }, this);
+                    this.on('change', function( field, value, options ) {
+                        var files = this.fileInputEl.dom.files;
+                        if (files) {
+                            this.fireEvent( 'fileselected', this, files );
+                        }
+                    }, this);
+                    this.callParent( arguments );
+                },
+                reset: function() {
+                    this.callParent( arguments );
+                    this.setMultipleInputAttribute();
+                },
+                setMultipleInputAttribute: function( inputEl ) {
+                    inputEl = inputEl || this.fileInputEl;
+                    inputEl.dom.setAttribute('multiple', '1');
+                }
+
+            });
+            Ext.define('FileUploadGrid', {
+                extend: 'Ext.grid.Panel',
+                alias: 'widget.fileuploadgrid',
+                multiSelect: true,
+                minHeight: 400,
+                config: {
+                    params: {},
+                    url: '/General/upload',
+                    uploadMethod: 'POST',
+                    fileParam: 'file',
+                    sizeParam: 'size',
+                    typeParam: 'type'
+                },
+                viewConfig: {
+                    markDirty: false,
+                    stripeRows: true
+                },
+                title: 'Upload Files',
+                initComponent: function() {
+                    var me = this;
+                    me.addEvents({
+                        'filechange': true
+                    });
+                    me.on( 'afterrender', me.addDNDHandler );
+                    me.on( 'filechange', me.handleFileChange );
+                    me.on( 'beforeselect', me.onBeforeSelect );
+                    Ext.applyIf(me, {
+                        store: {
+                            type: 'fileuploadstore'
+                        },
+                        columns: [
+                            {
+                                dataIndex: 'FileName',
+                                text: 'File',
+                                flex: 1
+                            }, 
+                            {
+                                dataIndex: 'Size',
+                                text: 'Size'
+                            }, 
+                            {
+                                dataIndex: 'Type',
+                                text: 'Type'
+                            }, 
+                            {
+                                dataIndex: 'Percent',
+                                text: 'Percent',
+                                flex: 1,
+                                renderer: function( value ) {
+                                    return value + '%'
+                                }
+                            }
+                        ],
+                        dockedItems: [
+                            {
+                                xtype: 'toolbar',
+                                items: [
+                                    {
+                                        xtype: 'fileuploadbutton',
+                                        text: 'Browse',
+                                        itemId: 'browse',
+                                        listeners: {
+                                            fileselected: function( fld, files ) {
+                                                me.addFiles(files);
+                                            }
+                                        }
+                                    }, 
+                                    {
+                                        xtype: 'button',
+                                        text: 'Upload',
+                                        disabled: true,
+                                        itemId: 'upload',
+                                        handler: function( btn, e, eOpts ) {
+                                            me.uploadFiles();
+                                        }
+                                    }, 
+                                    '->', 
+                                    {
+                                        xtype: 'button',
+                                        text: 'Remove Selected',
+                                        disabled: true,
+                                        itemId: 'removeselected',
+                                        handler: function( btn, e, eOpts ) {
+                                            me.removeSelected();
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    });
+                    me.callParent( arguments );
+                },
+                uploadFiles: function() {
+                    var me = this;
+                    me.getStore().each(function( record, index, count ) {
+                        if( !record.get( 'Complete' ) ) {
+                            me.processFile( record, index );
+                        }                        
+                    });
+
+                },
+                processFile: function( record, index ) {
+                    var me = this,
+                        formData = new FormData(),
+                        xhr = new XMLHttpRequest();
+                    formData.append( me.getFileParam(), record.get( 'FileData' ) );
+                    formData.append( me.getSizeParam(), record.get( 'Size' ) );
+                    formData.append( me.getTypeParam(), record.get( 'Type' ) );
+                    // loop over passed params and add to request
+                    for( var key in me.getParams() ) {
+                       formData.append( key, me.getParams()[ key ] ); 
+                    }
+                    // open connection
+                    xhr.open( me.getUploadMethod(), me.getUrl() );
+                    xhr.onload = function() {
+                        record.set( 'Status', true );
+                    }
+                    xhr.onerror = function( e ) {
+                        record.set( 'Status', false );
+                        record.set( 'Percent', 0 );
+                    }
+                    xhr.upload.onprogress = function( e ) {
+                        record.set( 'Percent', e.loaded / e.total * 100 | 0  );
+                    }
+                    xhr.send( formData );
+                },
+                removeSelected: function() {
+                    var me = this,
+                        selectedRecords = me.getSelectionModel().getSelection();
+                    // remove
+                    me.getStore().remove(selectedRecords);
+                    me.fireEvent('filechange', me);
+                },
+                removeAll: function() {
+                    var me = this;
+                    me.getStore().removeAll();
+                    me.fireEvent('filechange', me);
+                },
+                addDNDHandler: function() {
+                    var me = this,
+                        dragTarget = me.el;
+
+                    // add specialized listeners
+                    dragTarget.dom.ondragover = function( e ) {
+                        dragTarget.addCls('redness');
+                        e.preventDefault();
+                        return false;
+                    }
+                    dragTarget.dom.ondragend = function() {
+                        dragTarget.removeCls('redness');
+                    }
+                    dragTarget.dom.ondrop = function( e ) {
+                        e.preventDefault();
+                        me.addFiles(e.dataTransfer.files)
+                    }
+                },
+                handleFileChange: function() {
+                    var me = this,
+                        uploadBtn = me.down( '#upload' ),
+                        removeSelBtn = me.down( '#removeselected' );
+                    if ( me.getStore().getCount() ) {
+                        uploadBtn.enable();
+                        removeSelBtn.enable();
+                    } else {
+                        uploadBtn.disable();
+                        removeSelBtn.disable();
+                    }
+                },
+                onBeforeSelect: function( view, record, index, eOpts ) {
+                    if( record.get( 'Status' ) ) {
+                        return false;
+                    }
+                    return true;
+                },
+                addFiles: function( files ) {
+                    var me = this;
+                    for ( var i = 0; i < files.length; i++ ) {
+                        var fileData = files[ i ];
+                        me.getStore().add({
+                            FileName: fileData.name,
+                            Size: fileData.size,
+                            Type: fileData.type,
+                            Percent: 0,
+                            FileData: fileData
+                        })
+                    }
+                    me.fireEvent( 'filechange', me );
+                }
+            });
+            Ext.widget('fileuploadgrid', {
+                renderTo: Ext.getBody()
+            })
+        })
+    </script>
+</head>
+<body id="home"></body>
+</html>
